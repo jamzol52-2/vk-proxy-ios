@@ -45,7 +45,7 @@ jobs:
           MODULE_NAME=$(grep "^module" go.mod | awk '{print $2}' | tr -d '\r')
           CLEAN_DIR=$(echo "$MAIN_DIR" | sed 's/^\.\///')
           
-          if [ "$CLEAN_DIR" = "." ]; then
+          if[ "$CLEAN_DIR" = "." ]; then
             IMPORT_PATH="$MODULE_NAME"
           else
             IMPORT_PATH="$MODULE_NAME/$CLEAN_DIR"
@@ -97,6 +97,15 @@ jobs:
           HEADER="Sources/WireGuardKitC/WireGuardKitC.h"
           echo "#import <Foundation/Foundation.h>" | cat - "$HEADER" > temp && mv temp "$HEADER"
           echo "#include <sys/types.h>" | cat - "$HEADER" > temp && mv temp "$HEADER"
+          cd ..
+          
+          # Переносим файлы парсера WG-конфигов в наш Extension, так как они не входят в саму библиотеку WireGuardKit
+          cp passepartoutvpn-wireguard-apple/Sources/Shared/Model/TunnelConfiguration+WgQuickConfig.swift Extension/Sources/
+          cp passepartoutvpn-wireguard-apple/Sources/Shared/Model/String+ArrayConversion.swift Extension/Sources/
+          
+          # Добавляем импорт WireGuardKit в скопированные файлы
+          echo "import WireGuardKit" | cat - Extension/Sources/TunnelConfiguration+WgQuickConfig.swift > temp && mv temp Extension/Sources/TunnelConfiguration+WgQuickConfig.swift
+          echo "import WireGuardKit" | cat - Extension/Sources/String+ArrayConversion.swift > temp && mv temp Extension/Sources/String+ArrayConversion.swift
 
       - name: Write App.swift
         run: |
@@ -243,8 +252,9 @@ jobs:
                   // Запускаем ядро на Go
                   Ios_bridgeStartProxy(proxyArgs)
 
-                  // Запускаем WireGuard на внутренний порт
-                  let wgConfigString = """[Interface]
+                  // Запускаем WireGuard на внутренний порт (важно: перенос строки перед [Interface])
+                  let wgConfigString = """
+                  [Interface]
                   PrivateKey = \(wgPrivateKey)
                   Address = \(wgAddress)
                   MTU = 1280
@@ -292,6 +302,7 @@ jobs:
               sources: [App/Sources]
               settings:
                 CODE_SIGNING_ALLOWED: NO
+                PRODUCT_BUNDLE_IDENTIFIER: com.vkproxy.app
               info:
                 path: App/Info.plist
                 properties:
@@ -315,6 +326,7 @@ jobs:
               sources: [Extension/Sources]
               settings:
                 CODE_SIGNING_ALLOWED: NO
+                PRODUCT_BUNDLE_IDENTIFIER: com.vkproxy.app.Extension
               info:
                 path: Extension/Info.plist
                 properties:
@@ -352,7 +364,7 @@ jobs:
       - name: Package to IPA
         run: |
           mkdir -p Payload
-          cp -r build/VKProxy.app Payload/
+          cp -r build/VKProxyApp.app Payload/
           zip -r VKProxy.ipa Payload
 
       - name: Upload IPA Artifact
