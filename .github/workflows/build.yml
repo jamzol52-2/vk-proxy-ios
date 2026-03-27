@@ -20,85 +20,77 @@ jobs:
 
       - name: Install Development Tools
         run: |
-          go install golang.org/x/mobile/cmd/gomobile@latest
-          gomobile init
           brew install xcodegen
 
       - name: Create Project Folders
         run: |
-          mkdir -p Bridge App/Sources Extension/Sources Payload
-          
-      - name: Download and Patch vk-turn-proxy
+          mkdir -p App/Sources Extension/Sources Payload
+
+      - name: Prepare Unified Go Engine (WireGuard + VK Proxy)
         run: |
+          # 1. Скачиваем VK Proxy
           git clone https://github.com/cacggghp/vk-turn-proxy.git
           cd vk-turn-proxy
           
+          # Патчим его, чтобы он был подключаемым модулем, а не отдельной программой
           MAIN_FILE=$(find . -name "main.go" | grep -v "server" | head -n 1)
           MAIN_DIR=$(dirname "$MAIN_FILE")
-          
           find "$MAIN_DIR" -maxdepth 1 -name "*.go" -type f -exec sed -i '' 's/package main/package vkturn/g' {} +
           sed -i '' 's/func main()/func StartProxy()/g' "$MAIN_FILE"
           
           MODULE_NAME=$(grep "^module" go.mod | awk '{print $2}' | tr -d '\r')
           CLEAN_DIR=$(echo "$MAIN_DIR" | sed 's/^\.\///')
-          
-          if [ "$CLEAN_DIR" = "." ]; then
-            IMPORT_PATH="$MODULE_NAME"
-          else
-            IMPORT_PATH="$MODULE_NAME/$CLEAN_DIR"
-          fi
-          
+          if [ "$CLEAN_DIR" = "." ]; then IMPORT_PATH="$MODULE_NAME"; else IMPORT_PATH="$MODULE_NAME/$CLEAN_DIR"; fi
           cd ..
-          
-          mkdir ios_bridge
-          cd ios_bridge
-          go mod init ios_bridge
-          go mod edit -replace $MODULE_NAME=../vk-turn-proxy
-          
-          cat << EOF > bridge.go
-          package ios_bridge
 
+          # 2. Скачиваем WireGuardKit
+          git clone https://github.com/pixnek/passepartoutvpn-wireguard-apple.git
+          cd passepartoutvpn-wireguard-apple
+          git checkout b79f0f150356d8200a64922ecf041dd020140aa0
+          
+          # 3. Фикс ошибки компиляции C-кода (импорт системных типов)
+          HEADER="Sources/WireGuardKitC/WireGuardKitC.h"
+          echo "#import <Foundation/Foundation.h>" | cat - "$HEADER" > temp && mv temp "$HEADER"
+          echo "#include <sys/types.h>" | cat - "$HEADER" > temp && mv temp "$HEADER"
+          
+          # Объявляем нашу функцию для Swift
+          echo "extern void StartVKProxy(const char *args);" >> "$HEADER"
+
+          # 4. Внедряем VK Proxy внутрь WireGuard и компилируем их как единое целое
+          mv ../vk-turn-proxy Sources/WireGuardKitGo/vk-turn-proxy
+          cd Sources/WireGuardKitGo
+          go mod edit -replace $MODULE_NAME=./vk-turn-proxy
+          
+          cat << EOF > vkproxy_bridge.go
+          package main
+
+          import "C"
           import (
           	"os"
           	"strings"
           	vkturn "$IMPORT_PATH"
           )
 
-          func StartProxy(args string) string {
+          //export StartVKProxy
+          func StartVKProxy(cargs *C.char) {
+          	args := C.GoString(cargs)
           	os.Args = append([]string{"vk-turn-proxy"}, strings.Split(args, " ")...)
           	go vkturn.StartProxy()
-          	return ""
           }
           EOF
           
+          # Подтягиваем зависимости и собираем супер-ядро
           go get $IMPORT_PATH
           go mod tidy
           
-          go get golang.org/x/mobile/bind
-          go get golang.org/x/mobile/bind/objc
-          
-          gomobile bind -target=ios -o ../ios_bridge.xcframework .
-
-      - name: Download, Build and Patch WireGuardKit
-        run: |
-          git clone https://github.com/pixnek/passepartoutvpn-wireguard-apple.git
-          cd passepartoutvpn-wireguard-apple
-          git checkout b79f0f150356d8200a64922ecf041dd020140aa0
-          
-          # Фикс ошибки компиляции C-кода
-          HEADER="Sources/WireGuardKitC/WireGuardKitC.h"
-          echo "#import <Foundation/Foundation.h>" | cat - "$HEADER" > temp && mv temp "$HEADER"
-          echo "#include <sys/types.h>" | cat - "$HEADER" > temp && mv temp "$HEADER"
-          
-          # Кросс-компиляция wg-go под iOS (arm64)
-          cd Sources/WireGuardKitGo
           mkdir -p out
           export SDKROOT=$(xcrun --sdk iphoneos --show-sdk-path)
           export CC="$(xcrun --sdk iphoneos --find clang) -isysroot $SDKROOT -arch arm64 -miphoneos-version-min=15.0"
           CGO_ENABLED=1 GOOS=ios GOARCH=arm64 go build -tags ios -buildmode=c-archive -o out/libwg-go.a .
+          
           cd ../../../
           
-          # Перенос парсеров WG-конфигов
+          # 5. Копируем нужные парсеры конфигов для Swift
           cp passepartoutvpn-wireguard-apple/Sources/Shared/Model/TunnelConfiguration+WgQuickConfig.swift Extension/Sources/
           cp passepartoutvpn-wireguard-apple/Sources/Shared/Model/String+ArrayConversion.swift Extension/Sources/
           echo "import WireGuardKit" | cat - Extension/Sources/TunnelConfiguration+WgQuickConfig.swift > temp && mv temp Extension/Sources/TunnelConfiguration+WgQuickConfig.swift
@@ -184,7 +176,6 @@ jobs:
                       protocolConfig.providerBundleIdentifier = "com.vkproxy.app.Extension"
                       protocolConfig.serverAddress = "VK-TURN"
                       
-                      // ИСПРАВЛЕНА ОШИБКА ПРОБЕЛА ТУТ:
                       protocolConfig.providerConfiguration =[
                           "vkLink": vkLink, "wgEndpoint": wgEndpoint,
                           "wgPrivateKey": wgPrivateKey, "wgPublicKey": wgPublicKey, 
@@ -223,7 +214,7 @@ jobs:
           cat << 'EOF' > Extension/Sources/PacketTunnelProvider.swift
           import NetworkExtension
           import WireGuardKit
-          import Ios_bridge
+          import WireGuardKitC
 
           class PacketTunnelProvider: NEPacketTunnelProvider {
               private var adapter: WireGuardAdapter?
@@ -246,7 +237,10 @@ jobs:
                   if useUDP { proxyArgs += " -udp" }
                   proxyArgs += " \(vkLink)"
                   
-                  Ios_bridgeStartProxy(proxyArgs)
+                  // Запускаем единое ядро (VK + WG)
+                  proxyArgs.withCString { cString in
+                      StartVKProxy(cString)
+                  }
 
                   let wgConfigString = """
                   [Interface]
@@ -300,7 +294,6 @@ jobs:
                 PRODUCT_BUNDLE_IDENTIFIER: com.vkproxy.app
                 LIBRARY_SEARCH_PATHS: 
                   - "$(inherited)"
-                  - "$(SRCROOT)/passepartoutvpn-wireguard-apple/Sources/WireGuardKitGo"
                   - "$(SRCROOT)/passepartoutvpn-wireguard-apple/Sources/WireGuardKitGo/out"
               info:
                 path: App/Info.plist
@@ -328,7 +321,6 @@ jobs:
                 PRODUCT_BUNDLE_IDENTIFIER: com.vkproxy.app.Extension
                 LIBRARY_SEARCH_PATHS: 
                   - "$(inherited)"
-                  - "$(SRCROOT)/passepartoutvpn-wireguard-apple/Sources/WireGuardKitGo"
                   - "$(SRCROOT)/passepartoutvpn-wireguard-apple/Sources/WireGuardKitGo/out"
               info:
                 path: Extension/Info.plist
@@ -346,7 +338,6 @@ jobs:
                   com.apple.developer.networking.networkextension: [packet-tunnel-provider]
               dependencies:
                 - package: WireGuardKit
-                - framework: ios_bridge.xcframework
           EOF
 
       - name: Generate Xcode Project
