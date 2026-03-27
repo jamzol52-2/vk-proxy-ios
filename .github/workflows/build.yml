@@ -16,7 +16,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.25.x' # <-- ИСПРАВЛЕНИЕ 1: Новейшая версия Go
           cache: false
 
       - name: Install Development Tools
@@ -46,7 +46,6 @@ jobs:
           MODULE_NAME=$(grep "^module" go.mod | awk '{print $2}' | tr -d '\r')
           CLEAN_DIR=$(echo "$MAIN_DIR" | sed 's/^\.\///')
           
-          # ИСПРАВЛЕННЫЙ ПРОБЕЛ: теперь строго "if [" 
           if [ "$CLEAN_DIR" = "." ]; then
             IMPORT_PATH="$MODULE_NAME"
           else
@@ -79,6 +78,11 @@ jobs:
           EOF
           
           go get $IMPORT_PATH
+          
+          # <-- ИСПРАВЛЕНИЕ 2: Явно подтягиваем библиотеки для gomobile
+          go get golang.org/x/mobile/bind
+          go get golang.org/x/mobile/bind/objc
+          
           go mod tidy
           gomobile bind -target=ios -o ../ios_bridge.xcframework .
 
@@ -201,6 +205,7 @@ jobs:
           import NetworkExtension
           import WireGuardKit
           import Ios_bridge
+
           class PacketTunnelProvider: NEPacketTunnelProvider {
               private var adapter: WireGuardAdapter?
 
