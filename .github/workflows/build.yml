@@ -33,15 +33,12 @@ jobs:
           git clone https://github.com/cacggghp/vk-turn-proxy.git
           cd vk-turn-proxy
           
-          # Умный поиск: ищем клиентский файл main.go (пропуская серверный)
           MAIN_FILE=$(find . -name "main.go" | grep -v "server" | head -n 1)
           MAIN_DIR=$(dirname "$MAIN_FILE")
           
-          # Переписываем код для iOS
           find "$MAIN_DIR" -maxdepth 1 -name "*.go" -type f -exec sed -i '' 's/package main/package vkturn/g' {} +
           sed -i '' 's/func main()/func StartProxy()/g' "$MAIN_FILE"
           
-          # Достаем название модуля
           MODULE_NAME=$(grep "^module" go.mod | awk '{print $2}' | tr -d '\r')
           CLEAN_DIR=$(echo "$MAIN_DIR" | sed 's/^\.\///')
           
@@ -53,7 +50,6 @@ jobs:
           
           cd ..
           
-          # Собираем мост между Go и iOS
           mkdir ios_bridge
           cd ios_bridge
           go mod init ios_bridge
@@ -68,7 +64,6 @@ jobs:
           	vkturn "$IMPORT_PATH"
           )
 
-          // Функция запуска принимает настройки одной строкой через пробел
           func StartProxy(args string) string {
           	os.Args = append([]string{"vk-turn-proxy"}, strings.Split(args, " ")...)
           	go vkturn.StartProxy()
@@ -77,33 +72,32 @@ jobs:
           EOF
           
           go get $IMPORT_PATH
-          
-          # СНАЧАЛА делаем очистку (tidy)
           go mod tidy
           
-          # А ТОЛЬКО ПОТОМ скачиваем библиотеки, чтобы tidy их не удалил
           go get golang.org/x/mobile/bind
           go get golang.org/x/mobile/bind/objc
           
           gomobile bind -target=ios -o ../ios_bridge.xcframework .
 
-      - name: Download and Patch WireGuardKit
+      - name: Download, Build and Patch WireGuardKit
         run: |
           git clone https://github.com/pixnek/passepartoutvpn-wireguard-apple.git
           cd passepartoutvpn-wireguard-apple
           git checkout b79f0f150356d8200a64922ecf041dd020140aa0
           
-          # Фикс ошибки компиляции C-кода в Xcode 16+ (импорт недостающих типов)
+          # 1. Исправляем баг C-кода для новых версий Xcode
           HEADER="Sources/WireGuardKitC/WireGuardKitC.h"
           echo "#import <Foundation/Foundation.h>" | cat - "$HEADER" > temp && mv temp "$HEADER"
           echo "#include <sys/types.h>" | cat - "$HEADER" > temp && mv temp "$HEADER"
-          cd ..
           
-          # Переносим файлы парсера WG-конфигов в наш Extension, так как они не входят в саму библиотеку WireGuardKit
+          # 2. РЕШЕНИЕ ОШИБКИ ЛИНКЕРА: Собираем само ядро wg-go (libwg-go.a)
+          cd Sources/WireGuardKitGo
+          make
+          cd ../../../
+          
+          # 3. Переносим парсеры WG-конфигов в наше VPN-расширение
           cp passepartoutvpn-wireguard-apple/Sources/Shared/Model/TunnelConfiguration+WgQuickConfig.swift Extension/Sources/
           cp passepartoutvpn-wireguard-apple/Sources/Shared/Model/String+ArrayConversion.swift Extension/Sources/
-          
-          # Добавляем импорт WireGuardKit в скопированные файлы
           echo "import WireGuardKit" | cat - Extension/Sources/TunnelConfiguration+WgQuickConfig.swift > temp && mv temp Extension/Sources/TunnelConfiguration+WgQuickConfig.swift
           echo "import WireGuardKit" | cat - Extension/Sources/String+ArrayConversion.swift > temp && mv temp Extension/Sources/String+ArrayConversion.swift
 
@@ -244,22 +238,17 @@ jobs:
                   let useUDP = (config["useUDP"] as? String) == "true"
                   let threads = config["threads"] as? String ?? "4"
                   
-                  // Собираем правильные аргументы для ядра vk-turn-proxy
                   var proxyArgs = "-local 127.0.0.1:9000 -remote \(wgEndpoint) -n \(threads)"
                   if useUDP { proxyArgs += " -udp" }
                   proxyArgs += " \(vkLink)"
                   
-                  // Запускаем ядро на Go
                   Ios_bridgeStartProxy(proxyArgs)
 
-                  // Запускаем WireGuard на внутренний порт (важно: перенос строки перед [Interface])
                   let wgConfigString = """
                   [Interface]
                   PrivateKey = \(wgPrivateKey)
                   Address = \(wgAddress)
-                  MTU = 1280
-
-                  [Peer]
+                  MTU = 1280[Peer]
                   PublicKey = \(wgPublicKey)
                   AllowedIPs = 0.0.0.0/0
                   Endpoint = 127.0.0.1:9000
@@ -303,6 +292,10 @@ jobs:
               settings:
                 CODE_SIGNING_ALLOWED: NO
                 PRODUCT_BUNDLE_IDENTIFIER: com.vkproxy.app
+                LIBRARY_SEARCH_PATHS: 
+                  - "$(inherited)"
+                  - "$(SRCROOT)/passepartoutvpn-wireguard-apple/Sources/WireGuardKitGo"
+                  - "$(SRCROOT)/passepartoutvpn-wireguard-apple/Sources/WireGuardKitGo/out"
               info:
                 path: App/Info.plist
                 properties:
@@ -314,7 +307,7 @@ jobs:
               entitlements:
                 path: App/App.entitlements
                 properties:
-                  com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+                  com.apple.developer.networking.networkextension:[packet-tunnel-provider]
               dependencies:
                 - target: Extension
                   embed: true
@@ -327,6 +320,10 @@ jobs:
               settings:
                 CODE_SIGNING_ALLOWED: NO
                 PRODUCT_BUNDLE_IDENTIFIER: com.vkproxy.app.Extension
+                LIBRARY_SEARCH_PATHS: 
+                  - "$(inherited)"
+                  - "$(SRCROOT)/passepartoutvpn-wireguard-apple/Sources/WireGuardKitGo"
+                  - "$(SRCROOT)/passepartoutvpn-wireguard-apple/Sources/WireGuardKitGo/out"
               info:
                 path: Extension/Info.plist
                 properties:
@@ -340,7 +337,7 @@ jobs:
               entitlements:
                 path: Extension/Extension.entitlements
                 properties:
-                  com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+                  com.apple.developer.networking.networkextension:[packet-tunnel-provider]
               dependencies:
                 - package: WireGuardKit
                 - framework: ios_bridge.xcframework
