@@ -87,6 +87,17 @@ jobs:
           
           gomobile bind -target=ios -o ../ios_bridge.xcframework .
 
+      - name: Download and Patch WireGuardKit
+        run: |
+          git clone https://github.com/pixnek/passepartoutvpn-wireguard-apple.git
+          cd passepartoutvpn-wireguard-apple
+          git checkout b79f0f150356d8200a64922ecf041dd020140aa0
+          
+          # Фикс ошибки компиляции C-кода в Xcode 16+ (импорт недостающих типов)
+          HEADER="Sources/WireGuardKitC/WireGuardKitC.h"
+          echo "#import <Foundation/Foundation.h>" | cat - "$HEADER" > temp && mv temp "$HEADER"
+          echo "#include <sys/types.h>" | cat - "$HEADER" > temp && mv temp "$HEADER"
+
       - name: Write App.swift
         run: |
           cat << 'EOF' > App/Sources/App.swift
@@ -272,8 +283,7 @@ jobs:
             bundleIdPrefix: com.vkproxy
           packages:
             WireGuardKit:
-              url: https://github.com/pixnek/passepartoutvpn-wireguard-apple.git
-              revision: b79f0f150356d8200a64922ecf041dd020140aa0
+              path: passepartoutvpn-wireguard-apple
           targets:
             VKProxyApp:
               type: application
@@ -296,6 +306,7 @@ jobs:
                   com.apple.developer.networking.networkextension: [packet-tunnel-provider]
               dependencies:
                 - target: Extension
+                  embed: true
 
             Extension:
               type: app-extension
@@ -340,6 +351,7 @@ jobs:
 
       - name: Package to IPA
         run: |
+          mkdir -p Payload
           cp -r build/VKProxy.app Payload/
           zip -r VKProxy.ipa Payload
 
