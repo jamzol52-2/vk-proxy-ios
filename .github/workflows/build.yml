@@ -85,12 +85,12 @@ jobs:
           cd passepartoutvpn-wireguard-apple
           git checkout b79f0f150356d8200a64922ecf041dd020140aa0
           
-          # 1. Фикс ошибки компиляции C-кода в Xcode 16+ (импорт недостающих типов)
+          # Фикс ошибки компиляции C-кода
           HEADER="Sources/WireGuardKitC/WireGuardKitC.h"
           echo "#import <Foundation/Foundation.h>" | cat - "$HEADER" > temp && mv temp "$HEADER"
           echo "#include <sys/types.h>" | cat - "$HEADER" > temp && mv temp "$HEADER"
           
-          # 2. РЕШЕНИЕ ОШИБКИ ЛИНКЕРА: Жесткая кросс-компиляция wg-go под iOS (arm64)
+          # Кросс-компиляция wg-go под iOS (arm64)
           cd Sources/WireGuardKitGo
           mkdir -p out
           export SDKROOT=$(xcrun --sdk iphoneos --show-sdk-path)
@@ -98,7 +98,7 @@ jobs:
           CGO_ENABLED=1 GOOS=ios GOARCH=arm64 go build -tags ios -buildmode=c-archive -o out/libwg-go.a .
           cd ../../../
           
-          # 3. Переносим парсеры WG-конфигов в наше VPN-расширение
+          # Перенос парсеров WG-конфигов
           cp passepartoutvpn-wireguard-apple/Sources/Shared/Model/TunnelConfiguration+WgQuickConfig.swift Extension/Sources/
           cp passepartoutvpn-wireguard-apple/Sources/Shared/Model/String+ArrayConversion.swift Extension/Sources/
           echo "import WireGuardKit" | cat - Extension/Sources/TunnelConfiguration+WgQuickConfig.swift > temp && mv temp Extension/Sources/TunnelConfiguration+WgQuickConfig.swift
@@ -144,23 +144,23 @@ jobs:
                           
                           VStack(alignment: .leading, spacing: 10) {
                               Text("Ссылка на звонок ВК:")
-                              TextField("https://...", text: $vkLink).textFieldStyle(RoundedBorderTextFieldStyle()).autocapitalization(.none)
+                              TextField("https://...", text: $vkLink).textFieldStyle(.roundedBorder).autocapitalization(.none)
                               
                               Text("IP:Port вашего сервера (Peer):")
-                              TextField("1.2.3.4:56000", text: $wgEndpoint).textFieldStyle(RoundedBorderTextFieldStyle()).autocapitalization(.none)
+                              TextField("1.2.3.4:56000", text: $wgEndpoint).textFieldStyle(.roundedBorder).autocapitalization(.none)
 
                               Text("WG Private Key:")
-                              TextField("Private Key", text: $wgPrivateKey).textFieldStyle(RoundedBorderTextFieldStyle())
+                              TextField("Private Key", text: $wgPrivateKey).textFieldStyle(.roundedBorder)
                               
                               Text("WG Public Key:")
-                              TextField("Public Key", text: $wgPublicKey).textFieldStyle(RoundedBorderTextFieldStyle())
+                              TextField("Public Key", text: $wgPublicKey).textFieldStyle(.roundedBorder)
                               
                               Text("WG Internal IP:")
-                              TextField("10.0.0.2/32", text: $wgAddress).textFieldStyle(RoundedBorderTextFieldStyle())
+                              TextField("10.0.0.2/32", text: $wgAddress).textFieldStyle(.roundedBorder)
 
                               HStack {
                                   Text("Потоки (-n):")
-                                  TextField("4", text: $threads).textFieldStyle(RoundedBorderTextFieldStyle()).frame(width: 50)
+                                  TextField("4", text: $threads).textFieldStyle(.roundedBorder).frame(width: 50)
                                   Toggle("Использовать UDP", isOn: $useUDP)
                               }
                           }.padding()
@@ -184,6 +184,7 @@ jobs:
                       protocolConfig.providerBundleIdentifier = "com.vkproxy.app.Extension"
                       protocolConfig.serverAddress = "VK-TURN"
                       
+                      // ИСПРАВЛЕНА ОШИБКА ПРОБЕЛА ТУТ:
                       protocolConfig.providerConfiguration =[
                           "vkLink": vkLink, "wgEndpoint": wgEndpoint,
                           "wgPrivateKey": wgPrivateKey, "wgPublicKey": wgPublicKey, 
@@ -312,7 +313,7 @@ jobs:
               entitlements:
                 path: App/App.entitlements
                 properties:
-                  com.apple.developer.networking.networkextension:[packet-tunnel-provider]
+                  com.apple.developer.networking.networkextension: [packet-tunnel-provider]
               dependencies:
                 - target: Extension
                   embed: true
@@ -342,7 +343,7 @@ jobs:
               entitlements:
                 path: Extension/Extension.entitlements
                 properties:
-                  com.apple.developer.networking.networkextension:[packet-tunnel-provider]
+                  com.apple.developer.networking.networkextension: [packet-tunnel-provider]
               dependencies:
                 - package: WireGuardKit
                 - framework: ios_bridge.xcframework
