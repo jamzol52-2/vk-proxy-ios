@@ -11,9 +11,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: '1.21'
+          cache: false # Отключаем кэш, чтобы не было ошибки go.sum
 
       - name: Install Development Tools
         run: |
@@ -25,45 +26,59 @@ jobs:
         run: |
           mkdir -p Bridge App/Sources Extension/Sources Payload
           
-      - name: Write Go Bridge (Ядро)
-        run: |
-          cat << 'EOF' > Bridge/bridge.go
-          package ios_bridge
-
-          import (
-          	"os"
-          	"vkturn"
-          )
-
-          func StartProxy(vkLink string) string {
-            // Подменяем аргументы запуска так, будто мы запустили ядро в консоли
-          	os.Args =[]string{"vk-turn-proxy", vkLink}
-          	go vkturn.StartProxy() // Запуск в фоновом потоке
-          	return ""
-          }
-          EOF
-
       - name: Download and Patch vk-turn-proxy
         run: |
           git clone https://github.com/cacggghp/vk-turn-proxy.git
           cd vk-turn-proxy
-          # Автоматически переписываем код под библиотеку iOS
-          sed -i '' 's/package main/package vkturn/g' *.go
-          sed -i '' 's/func main()/func StartProxy()/g' main.go
+          
+          # Умный поиск: ищем клиентский файл main.go (пропуская серверный)
+          MAIN_FILE=$(find . -name "main.go" | grep -v "server" | head -n 1)
+          MAIN_DIR=$(dirname "$MAIN_FILE")
+          
+          # Переписываем код для iOS
+          find "$MAIN_DIR" -maxdepth 1 -name "*.go" -type f -exec sed -i '' 's/package main/package vkturn/g' {} +
+          sed -i '' 's/func main()/func StartProxy()/g' "$MAIN_FILE"
+          
+          # Достаем название модуля
+          MODULE_NAME=$(grep "^module" go.mod | awk '{print $2}' | tr -d '\r')
+          CLEAN_DIR=$(echo "$MAIN_DIR" | sed 's/^\.\///')
+          
+          if[ "$CLEAN_DIR" = "." ]; then
+            IMPORT_PATH="$MODULE_NAME"
+          else
+            IMPORT_PATH="$MODULE_NAME/$CLEAN_DIR"
+          fi
+          
           cd ..
           
-          # Собираем движок
+          # Собираем мост между Go и iOS
           mkdir ios_bridge
           cd ios_bridge
           go mod init ios_bridge
-          go mod edit -replace vkturn=../vk-turn-proxy
-          cp ../Bridge/bridge.go .
-          go get vkturn
+          go mod edit -replace $MODULE_NAME=../vk-turn-proxy
+          
+          cat << EOF > bridge.go
+          package ios_bridge
+
+          import (
+          	"os"
+          	"strings"
+          	vkturn "$IMPORT_PATH"
+          )
+
+          // Функция запуска принимает настройки одной строкой через пробел
+          func StartProxy(args string) string {
+          	os.Args = append([]string{"vk-turn-proxy"}, strings.Split(args, " ")...)
+          	go vkturn.StartProxy()
+          	return ""
+          }
+          EOF
+          
+          go get $IMPORT_PATH
           go mod tidy
           gomobile bind -target=ios -o ../ios_bridge.xcframework .
-          cd ..
 
-      - name: Write App.swift (Точка входа)
+      - name: Write App.swift
         run: |
           cat << 'EOF' > App/Sources/App.swift
           import SwiftUI
@@ -84,30 +99,44 @@ jobs:
           struct ContentView: View {
               @State private var vpnStatus: String = "Отключено"
               @AppStorage("vkLink") private var vkLink: String = "https://vk.com/call/join/..."
+              @AppStorage("wgEndpoint") private var wgEndpoint: String = "1.2.3.4:56000"
               @AppStorage("wgPrivateKey") private var wgPrivateKey: String = "ТВОЙ_ПРИВАТНЫЙ_КЛЮЧ"
               @AppStorage("wgPublicKey") private var wgPublicKey: String = "ПУБЛИЧНЫЙ_КЛЮЧ_СЕРВЕРА"
               @AppStorage("wgAddress") private var wgAddress: String = "10.0.0.2/32"
+              @AppStorage("useUDP") private var useUDP: Bool = true
+              @AppStorage("threads") private var threads: String = "4"
 
               var body: some View {
                   ScrollView {
-                      VStack(spacing: 20) {
+                      VStack(spacing: 15) {
                           Image(systemName: "lock.shield.fill")
                               .font(.system(size: 80))
                               .foregroundColor(vpnStatus == "Подключено" ? .green : .gray)
                           
-                          Text("VK Turn Proxy VPN")
-                              .font(.title).bold()
+                          Text("VK Turn Proxy").font(.title).bold()
                           Text("Статус: \(vpnStatus)").foregroundColor(.secondary)
                           
-                          VStack(alignment: .leading) {
-                              Text("Ссылка на звонок ВК / Яндекс:")
-                              TextField("https://vk.com/...", text: $vkLink).textFieldStyle(RoundedBorderTextFieldStyle()).autocapitalization(.none)
-                              Text("WireGuard Private Key:")
+                          VStack(alignment: .leading, spacing: 10) {
+                              Text("Ссылка на звонок ВК:")
+                              TextField("https://...", text: $vkLink).textFieldStyle(RoundedBorderTextFieldStyle()).autocapitalization(.none)
+                              
+                              Text("IP:Port вашего сервера (Peer):")
+                              TextField("1.2.3.4:56000", text: $wgEndpoint).textFieldStyle(RoundedBorderTextFieldStyle()).autocapitalization(.none)
+
+                              Text("WG Private Key:")
                               TextField("Private Key", text: $wgPrivateKey).textFieldStyle(RoundedBorderTextFieldStyle())
-                              Text("WireGuard Public Key:")
+                              
+                              Text("WG Public Key:")
                               TextField("Public Key", text: $wgPublicKey).textFieldStyle(RoundedBorderTextFieldStyle())
-                              Text("WireGuard Internal IP:")
+                              
+                              Text("WG Internal IP:")
                               TextField("10.0.0.2/32", text: $wgAddress).textFieldStyle(RoundedBorderTextFieldStyle())
+
+                              HStack {
+                                  Text("Потоки (-n):")
+                                  TextField("4", text: $threads).textFieldStyle(RoundedBorderTextFieldStyle()).frame(width: 50)
+                                  Toggle("Использовать UDP", isOn: $useUDP)
+                              }
                           }.padding()
                           
                           Button(action: {
@@ -129,10 +158,11 @@ jobs:
                       protocolConfig.providerBundleIdentifier = "com.vkproxy.app.Extension"
                       protocolConfig.serverAddress = "VK-TURN"
                       
-                      // Передаем настройки в VPN ядро
                       protocolConfig.providerConfiguration =[
-                          "vkLink": vkLink, "wgPrivateKey": wgPrivateKey,
-                          "wgPublicKey": wgPublicKey, "wgAddress": wgAddress
+                          "vkLink": vkLink, "wgEndpoint": wgEndpoint,
+                          "wgPrivateKey": wgPrivateKey, "wgPublicKey": wgPublicKey, 
+                          "wgAddress": wgAddress, "useUDP": useUDP ? "true" : "false",
+                          "threads": threads
                       ]
                       manager.protocolConfiguration = protocolConfig
                       manager.isEnabled = true
@@ -160,7 +190,7 @@ jobs:
           }
           EOF
 
-      - name: Write PacketTunnelProvider.swift (VPN Расширение)
+      - name: Write PacketTunnelProvider.swift
         run: |
           cat << 'EOF' > Extension/Sources/PacketTunnelProvider.swift
           import NetworkExtension
@@ -177,14 +207,22 @@ jobs:
                   }
                   
                   let vkLink = config["vkLink"] as? String ?? ""
+                  let wgEndpoint = config["wgEndpoint"] as? String ?? "1.2.3.4:56000"
                   let wgPrivateKey = config["wgPrivateKey"] as? String ?? ""
                   let wgPublicKey = config["wgPublicKey"] as? String ?? ""
                   let wgAddress = config["wgAddress"] as? String ?? ""
+                  let useUDP = (config["useUDP"] as? String) == "true"
+                  let threads = config["threads"] as? String ?? "4"
                   
-                  // 1. Запуск ядра vk-turn-proxy (Go)
-                  Ios_bridgeStartProxy(vkLink)
+                  // Собираем правильные аргументы для ядра vk-turn-proxy
+                  var proxyArgs = "-local 127.0.0.1:9000 -remote \(wgEndpoint) -n \(threads)"
+                  if useUDP { proxyArgs += " -udp" }
+                  proxyArgs += " \(vkLink)"
+                  
+                  // Запускаем ядро на Go
+                  Ios_bridgeStartProxy(proxyArgs)
 
-                  // 2. Конфиг WireGuard (он стучится в Go прокси на 127.0.0.1:9000)
+                  // Запускаем WireGuard на внутренний порт
                   let wgConfigString = """
                   [Interface]
                   PrivateKey = \(wgPrivateKey)
@@ -198,7 +236,6 @@ jobs:
                   PersistentKeepalive = 25
                   """
                   
-                  // 3. Запуск WireGuard
                   do {
                       let tunnelConfig = try TunnelConfiguration(fromWgQuickConfig: wgConfigString, called: "VKProxy")
                       adapter = WireGuardAdapter(with: self) { level, msg in
@@ -218,7 +255,7 @@ jobs:
           }
           EOF
 
-      - name: Write project.yml (Генератор Xcode проекта)
+      - name: Write project.yml
         run: |
           cat << 'EOF' > project.yml
           name: VKProxy
@@ -276,7 +313,7 @@ jobs:
       - name: Generate Xcode Project
         run: xcodegen generate
 
-      - name: Build iOS App (Без сертификата)
+      - name: Build iOS App
         run: |
           xcodebuild clean build \
             -project VKProxy.xcodeproj \
