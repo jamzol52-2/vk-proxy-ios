@@ -45,7 +45,7 @@ jobs:
           MODULE_NAME=$(grep "^module" go.mod | awk '{print $2}' | tr -d '\r')
           CLEAN_DIR=$(echo "$MAIN_DIR" | sed 's/^\.\///')
           
-          if[ "$CLEAN_DIR" = "." ]; then
+          if [ "$CLEAN_DIR" = "." ]; then
             IMPORT_PATH="$MODULE_NAME"
           else
             IMPORT_PATH="$MODULE_NAME/$CLEAN_DIR"
