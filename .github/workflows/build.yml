@@ -233,7 +233,8 @@ jobs:
                   Ios_bridgeStartProxy(proxyArgs)
 
                   // Запускаем WireGuard на внутренний порт
-                  let wgConfigString = """[Interface]
+                  let wgConfigString = """
+                  [Interface]
                   PrivateKey = \(wgPrivateKey)
                   Address = \(wgAddress)
                   MTU = 1280
@@ -283,6 +284,7 @@ jobs:
               settings:
                 CODE_SIGNING_ALLOWED: NO
               info:
+                path: App/Info.plist  # <-- Добавили пути для сохранения
                 properties:
                   CFBundleIdentifier: com.vkproxy.app
                   CFBundleName: VKProxy
@@ -290,6 +292,7 @@ jobs:
                   CFBundleVersion: "1"
                   UILaunchStoryboardName: LaunchScreen
               entitlements:
+                path: App/App.entitlements  # <-- Добавили пути для сохранения
                 properties:
                   com.apple.developer.networking.networkextension: [packet-tunnel-provider]
               dependencies:
@@ -303,6 +306,7 @@ jobs:
               settings:
                 CODE_SIGNING_ALLOWED: NO
               info:
+                path: Extension/Info.plist  # <-- Добавили пути для сохранения
                 properties:
                   CFBundleIdentifier: com.vkproxy.app.Extension
                   CFBundleName: Extension
@@ -312,8 +316,9 @@ jobs:
                     NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
                     NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
               entitlements:
+                path: Extension/Extension.entitlements  # <-- Добавили пути для сохранения
                 properties:
-                  com.apple.developer.networking.networkextension:[packet-tunnel-provider]
+                  com.apple.developer.networking.networkextension: [packet-tunnel-provider]
               dependencies:
                 - package: WireGuardKit
                 - framework: ios_bridge.xcframework
