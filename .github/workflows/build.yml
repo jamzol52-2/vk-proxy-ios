@@ -1,0 +1,300 @@
+name: Build iOS VPN App
+on: 
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Install Development Tools
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          gomobile init
+          brew install xcodegen
+
+      - name: Create Project Folders
+        run: |
+          mkdir -p Bridge App/Sources Extension/Sources Payload
+          
+      - name: Write Go Bridge (Ядро)
+        run: |
+          cat << 'EOF' > Bridge/bridge.go
+          package ios_bridge
+
+          import (
+          	"os"
+          	"vkturn"
+          )
+
+          func StartProxy(vkLink string) string {
+            // Подменяем аргументы запуска так, будто мы запустили ядро в консоли
+          	os.Args =[]string{"vk-turn-proxy", vkLink}
+          	go vkturn.StartProxy() // Запуск в фоновом потоке
+          	return ""
+          }
+          EOF
+
+      - name: Download and Patch vk-turn-proxy
+        run: |
+          git clone https://github.com/cacggghp/vk-turn-proxy.git
+          cd vk-turn-proxy
+          # Автоматически переписываем код под библиотеку iOS
+          sed -i '' 's/package main/package vkturn/g' *.go
+          sed -i '' 's/func main()/func StartProxy()/g' main.go
+          cd ..
+          
+          # Собираем движок
+          mkdir ios_bridge
+          cd ios_bridge
+          go mod init ios_bridge
+          go mod edit -replace vkturn=../vk-turn-proxy
+          cp ../Bridge/bridge.go .
+          go get vkturn
+          go mod tidy
+          gomobile bind -target=ios -o ../ios_bridge.xcframework .
+          cd ..
+
+      - name: Write App.swift (Точка входа)
+        run: |
+          cat << 'EOF' > App/Sources/App.swift
+          import SwiftUI
+          @main
+          struct VKProxyApp: App {
+              var body: some Scene {
+                  WindowGroup { ContentView() }
+              }
+          }
+          EOF
+
+      - name: Write ContentView.swift (Интерфейс)
+        run: |
+          cat << 'EOF' > App/Sources/ContentView.swift
+          import SwiftUI
+          import NetworkExtension
+
+          struct ContentView: View {
+              @State private var vpnStatus: String = "Отключено"
+              @AppStorage("vkLink") private var vkLink: String = "https://vk.com/call/join/..."
+              @AppStorage("wgPrivateKey") private var wgPrivateKey: String = "ТВОЙ_ПРИВАТНЫЙ_КЛЮЧ"
+              @AppStorage("wgPublicKey") private var wgPublicKey: String = "ПУБЛИЧНЫЙ_КЛЮЧ_СЕРВЕРА"
+              @AppStorage("wgAddress") private var wgAddress: String = "10.0.0.2/32"
+
+              var body: some View {
+                  ScrollView {
+                      VStack(spacing: 20) {
+                          Image(systemName: "lock.shield.fill")
+                              .font(.system(size: 80))
+                              .foregroundColor(vpnStatus == "Подключено" ? .green : .gray)
+                          
+                          Text("VK Turn Proxy VPN")
+                              .font(.title).bold()
+                          Text("Статус: \(vpnStatus)").foregroundColor(.secondary)
+                          
+                          VStack(alignment: .leading) {
+                              Text("Ссылка на звонок ВК / Яндекс:")
+                              TextField("https://vk.com/...", text: $vkLink).textFieldStyle(RoundedBorderTextFieldStyle()).autocapitalization(.none)
+                              Text("WireGuard Private Key:")
+                              TextField("Private Key", text: $wgPrivateKey).textFieldStyle(RoundedBorderTextFieldStyle())
+                              Text("WireGuard Public Key:")
+                              TextField("Public Key", text: $wgPublicKey).textFieldStyle(RoundedBorderTextFieldStyle())
+                              Text("WireGuard Internal IP:")
+                              TextField("10.0.0.2/32", text: $wgAddress).textFieldStyle(RoundedBorderTextFieldStyle())
+                          }.padding()
+                          
+                          Button(action: {
+                              if vpnStatus == "Подключено" { stopVPN() } else { saveAndStartVPN() }
+                          }) {
+                              Text(vpnStatus == "Подключено" ? "Отключить" : "Подключить")
+                                  .frame(maxWidth: .infinity).padding()
+                                  .background(vpnStatus == "Подключено" ? Color.red : Color.blue)
+                                  .foregroundColor(.white).cornerRadius(10)
+                          }.padding(.horizontal)
+                      }
+                  }.onAppear(perform: updateStatus)
+              }
+              
+              func saveAndStartVPN() {
+                  NETunnelProviderManager.loadAllFromPreferences { managers, _ in
+                      let manager = managers?.first ?? NETunnelProviderManager()
+                      let protocolConfig = NETunnelProviderProtocol()
+                      protocolConfig.providerBundleIdentifier = "com.vkproxy.app.Extension"
+                      protocolConfig.serverAddress = "VK-TURN"
+                      
+                      // Передаем настройки в VPN ядро
+                      protocolConfig.providerConfiguration =[
+                          "vkLink": vkLink, "wgPrivateKey": wgPrivateKey,
+                          "wgPublicKey": wgPublicKey, "wgAddress": wgAddress
+                      ]
+                      manager.protocolConfiguration = protocolConfig
+                      manager.isEnabled = true
+                      manager.localizedDescription = "VK Turn Proxy"
+                      
+                      manager.saveToPreferences { _ in
+                          try? manager.connection.startVPNTunnel()
+                          updateStatus()
+                      }
+                  }
+              }
+              func stopVPN() {
+                  NETunnelProviderManager.loadAllFromPreferences { managers, _ in
+                      managers?.first?.connection.stopVPNTunnel()
+                      updateStatus()
+                  }
+              }
+              func updateStatus() {
+                  NETunnelProviderManager.loadAllFromPreferences { managers, _ in
+                      if let m = managers?.first, m.connection.status != .disconnected {
+                          vpnStatus = "Подключено"
+                      } else { vpnStatus = "Отключено" }
+                  }
+              }
+          }
+          EOF
+
+      - name: Write PacketTunnelProvider.swift (VPN Расширение)
+        run: |
+          cat << 'EOF' > Extension/Sources/PacketTunnelProvider.swift
+          import NetworkExtension
+          import WireGuardKit
+          import Ios_bridge
+
+          class PacketTunnelProvider: NEPacketTunnelProvider {
+              private var adapter: WireGuardAdapter?
+
+              override func startTunnel(options: [String : NSObject]?, completionHandler: @escaping (Error?) -> Void) {
+                  guard let config = (protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration else {
+                      completionHandler(NSError(domain: "VKProxy", code: 1, userInfo: nil))
+                      return
+                  }
+                  
+                  let vkLink = config["vkLink"] as? String ?? ""
+                  let wgPrivateKey = config["wgPrivateKey"] as? String ?? ""
+                  let wgPublicKey = config["wgPublicKey"] as? String ?? ""
+                  let wgAddress = config["wgAddress"] as? String ?? ""
+                  
+                  // 1. Запуск ядра vk-turn-proxy (Go)
+                  Ios_bridgeStartProxy(vkLink)
+
+                  // 2. Конфиг WireGuard (он стучится в Go прокси на 127.0.0.1:9000)
+                  let wgConfigString = """
+                  [Interface]
+                  PrivateKey = \(wgPrivateKey)
+                  Address = \(wgAddress)
+                  MTU = 1280
+
+                  [Peer]
+                  PublicKey = \(wgPublicKey)
+                  AllowedIPs = 0.0.0.0/0
+                  Endpoint = 127.0.0.1:9000
+                  PersistentKeepalive = 25
+                  """
+                  
+                  // 3. Запуск WireGuard
+                  do {
+                      let tunnelConfig = try TunnelConfiguration(fromWgQuickConfig: wgConfigString, called: "VKProxy")
+                      adapter = WireGuardAdapter(with: self) { level, msg in
+                          NSLog("[WireGuard] %@", msg)
+                      }
+                      adapter?.start(tunnelConfiguration: tunnelConfig) { err in
+                          completionHandler(err)
+                      }
+                  } catch {
+                      completionHandler(error)
+                  }
+              }
+
+              override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
+                  adapter?.stop { _ in completionHandler() }
+              }
+          }
+          EOF
+
+      - name: Write project.yml (Генератор Xcode проекта)
+        run: |
+          cat << 'EOF' > project.yml
+          name: VKProxy
+          options:
+            bundleIdPrefix: com.vkproxy
+          packages:
+            WireGuardKit:
+              url: https://github.com/WireGuard/wireguard-apple.git
+              branch: master
+          targets:
+            VKProxyApp:
+              type: application
+              platform: iOS
+              deploymentTarget: "15.0"
+              sources: [App/Sources]
+              settings:
+                CODE_SIGNING_ALLOWED: NO
+              info:
+                properties:
+                  CFBundleIdentifier: com.vkproxy.app
+                  CFBundleName: VKProxy
+                  CFBundleShortVersionString: "1.0"
+                  CFBundleVersion: "1"
+                  UILaunchStoryboardName: LaunchScreen
+              entitlements:
+                properties:
+                  com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+              dependencies:
+                - target: Extension
+
+            Extension:
+              type: app-extension
+              platform: iOS
+              deploymentTarget: "15.0"
+              sources: [Extension/Sources]
+              settings:
+                CODE_SIGNING_ALLOWED: NO
+              info:
+                properties:
+                  CFBundleIdentifier: com.vkproxy.app.Extension
+                  CFBundleName: Extension
+                  CFBundleShortVersionString: "1.0"
+                  CFBundleVersion: "1"
+                  NSExtension:
+                    NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
+                    NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
+              entitlements:
+                properties:
+                  com.apple.developer.networking.networkextension:[packet-tunnel-provider]
+              dependencies:
+                - package: WireGuardKit
+                - framework: ios_bridge.xcframework
+          EOF
+
+      - name: Generate Xcode Project
+        run: xcodegen generate
+
+      - name: Build iOS App (Без сертификата)
+        run: |
+          xcodebuild clean build \
+            -project VKProxy.xcodeproj \
+            -scheme VKProxyApp \
+            -configuration Release \
+            -sdk iphoneos \
+            CONFIGURATION_BUILD_DIR=${PWD}/build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_IDENTITY=""
+
+      - name: Package to IPA
+        run: |
+          cp -r build/VKProxy.app Payload/
+          zip -r VKProxy.ipa Payload
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VKProxy-iOS-App
+          path: VKProxy.ipa
