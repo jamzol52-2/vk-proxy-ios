@@ -77,8 +77,11 @@ jobs:
           EOF
           
           go get $IMPORT_PATH
+          
+          # СНАЧАЛА делаем очистку (tidy)
           go mod tidy
           
+          # А ТОЛЬКО ПОТОМ скачиваем библиотеки, чтобы tidy их не удалил
           go get golang.org/x/mobile/bind
           go get golang.org/x/mobile/bind/objc
           
@@ -230,8 +233,7 @@ jobs:
                   Ios_bridgeStartProxy(proxyArgs)
 
                   // Запускаем WireGuard на внутренний порт
-                  let wgConfigString = """
-                  [Interface]
+                  let wgConfigString = """[Interface]
                   PrivateKey = \(wgPrivateKey)
                   Address = \(wgAddress)
                   MTU = 1280
@@ -270,7 +272,7 @@ jobs:
             bundleIdPrefix: com.vkproxy
           packages:
             WireGuardKit:
-              url: https://github.com/passepartoutvpn/wireguard-apple.git
+              url: https://github.com/pixnek/passepartoutvpn-wireguard-apple.git
               revision: b79f0f150356d8200a64922ecf041dd020140aa0
           targets:
             VKProxyApp:
