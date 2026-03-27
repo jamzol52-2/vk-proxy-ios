@@ -201,7 +201,6 @@ jobs:
           import NetworkExtension
           import WireGuardKit
           import Ios_bridge
-
           class PacketTunnelProvider: NEPacketTunnelProvider {
               private var adapter: WireGuardAdapter?
 
