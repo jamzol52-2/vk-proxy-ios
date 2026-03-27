@@ -6,6 +6,9 @@ on:
 jobs:
   build:
     runs-on: macos-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -14,7 +17,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.21'
-          cache: false # Отключаем кэш, чтобы не было ошибки go.sum
+          cache: false
 
       - name: Install Development Tools
         run: |
@@ -43,6 +46,7 @@ jobs:
           MODULE_NAME=$(grep "^module" go.mod | awk '{print $2}' | tr -d '\r')
           CLEAN_DIR=$(echo "$MAIN_DIR" | sed 's/^\.\///')
           
+          # ОШИБКА БЫЛА ЗДЕСЬ (не хватало пробела после if)
           if[ "$CLEAN_DIR" = "." ]; then
             IMPORT_PATH="$MODULE_NAME"
           else
@@ -90,7 +94,7 @@ jobs:
           }
           EOF
 
-      - name: Write ContentView.swift (Интерфейс)
+      - name: Write ContentView.swift
         run: |
           cat << 'EOF' > App/Sources/ContentView.swift
           import SwiftUI
@@ -163,7 +167,8 @@ jobs:
                           "wgPrivateKey": wgPrivateKey, "wgPublicKey": wgPublicKey, 
                           "wgAddress": wgAddress, "useUDP": useUDP ? "true" : "false",
                           "threads": threads
-                      ]
+                      ] as [String : Any]
+                      
                       manager.protocolConfiguration = protocolConfig
                       manager.isEnabled = true
                       manager.localizedDescription = "VK Turn Proxy"
