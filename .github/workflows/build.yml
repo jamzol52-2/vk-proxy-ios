@@ -8,7 +8,6 @@ jobs:
     runs-on: macos-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -16,7 +15,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25.x' # <-- ИСПРАВЛЕНИЕ 1: Новейшая версия Go
+          go-version: '1.25.x'
           cache: false
 
       - name: Install Development Tools
@@ -79,11 +78,13 @@ jobs:
           
           go get $IMPORT_PATH
           
-          # <-- ИСПРАВЛЕНИЕ 2: Явно подтягиваем библиотеки для gomobile
+          # СНАЧАЛА делаем очистку (tidy)
+          go mod tidy
+          
+          # А ТОЛЬКО ПОТОМ скачиваем библиотеки, чтобы tidy их не удалил
           go get golang.org/x/mobile/bind
           go get golang.org/x/mobile/bind/objc
           
-          go mod tidy
           gomobile bind -target=ios -o ../ios_bridge.xcframework .
 
       - name: Write App.swift
@@ -171,7 +172,7 @@ jobs:
                           "wgPrivateKey": wgPrivateKey, "wgPublicKey": wgPublicKey, 
                           "wgAddress": wgAddress, "useUDP": useUDP ? "true" : "false",
                           "threads": threads
-                      ] as[String : Any]
+                      ] as [String : Any]
                       
                       manager.protocolConfiguration = protocolConfig
                       manager.isEnabled = true
