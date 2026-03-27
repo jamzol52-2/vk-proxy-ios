@@ -85,14 +85,17 @@ jobs:
           cd passepartoutvpn-wireguard-apple
           git checkout b79f0f150356d8200a64922ecf041dd020140aa0
           
-          # 1. Исправляем баг C-кода для новых версий Xcode
+          # 1. Фикс ошибки компиляции C-кода в Xcode 16+ (импорт недостающих типов)
           HEADER="Sources/WireGuardKitC/WireGuardKitC.h"
           echo "#import <Foundation/Foundation.h>" | cat - "$HEADER" > temp && mv temp "$HEADER"
           echo "#include <sys/types.h>" | cat - "$HEADER" > temp && mv temp "$HEADER"
           
-          # 2. РЕШЕНИЕ ОШИБКИ ЛИНКЕРА: Собираем само ядро wg-go (libwg-go.a)
+          # 2. РЕШЕНИЕ ОШИБКИ ЛИНКЕРА: Жесткая кросс-компиляция wg-go под iOS (arm64)
           cd Sources/WireGuardKitGo
-          make
+          mkdir -p out
+          export SDKROOT=$(xcrun --sdk iphoneos --show-sdk-path)
+          export CC="$(xcrun --sdk iphoneos --find clang) -isysroot $SDKROOT -arch arm64 -miphoneos-version-min=15.0"
+          CGO_ENABLED=1 GOOS=ios GOARCH=arm64 go build -tags ios -buildmode=c-archive -o out/libwg-go.a .
           cd ../../../
           
           # 3. Переносим парсеры WG-конфигов в наше VPN-расширение
@@ -248,7 +251,9 @@ jobs:
                   [Interface]
                   PrivateKey = \(wgPrivateKey)
                   Address = \(wgAddress)
-                  MTU = 1280[Peer]
+                  MTU = 1280
+
+                  [Peer]
                   PublicKey = \(wgPublicKey)
                   AllowedIPs = 0.0.0.0/0
                   Endpoint = 127.0.0.1:9000
