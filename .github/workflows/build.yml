@@ -77,11 +77,8 @@ jobs:
           EOF
           
           go get $IMPORT_PATH
-          
-          # СНАЧАЛА делаем очистку (tidy)
           go mod tidy
           
-          # А ТОЛЬКО ПОТОМ скачиваем библиотеки, чтобы tidy их не удалил
           go get golang.org/x/mobile/bind
           go get golang.org/x/mobile/bind/objc
           
@@ -273,8 +270,8 @@ jobs:
             bundleIdPrefix: com.vkproxy
           packages:
             WireGuardKit:
-              url: https://github.com/WireGuard/wireguard-apple.git
-              branch: master
+              url: https://github.com/passepartoutvpn/wireguard-apple.git
+              revision: b79f0f150356d8200a64922ecf041dd020140aa0
           targets:
             VKProxyApp:
               type: application
@@ -284,7 +281,7 @@ jobs:
               settings:
                 CODE_SIGNING_ALLOWED: NO
               info:
-                path: App/Info.plist  # <-- Добавили пути для сохранения
+                path: App/Info.plist
                 properties:
                   CFBundleIdentifier: com.vkproxy.app
                   CFBundleName: VKProxy
@@ -292,7 +289,7 @@ jobs:
                   CFBundleVersion: "1"
                   UILaunchStoryboardName: LaunchScreen
               entitlements:
-                path: App/App.entitlements  # <-- Добавили пути для сохранения
+                path: App/App.entitlements
                 properties:
                   com.apple.developer.networking.networkextension: [packet-tunnel-provider]
               dependencies:
@@ -306,7 +303,7 @@ jobs:
               settings:
                 CODE_SIGNING_ALLOWED: NO
               info:
-                path: Extension/Info.plist  # <-- Добавили пути для сохранения
+                path: Extension/Info.plist
                 properties:
                   CFBundleIdentifier: com.vkproxy.app.Extension
                   CFBundleName: Extension
@@ -316,7 +313,7 @@ jobs:
                     NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
                     NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
               entitlements:
-                path: Extension/Extension.entitlements  # <-- Добавили пути для сохранения
+                path: Extension/Extension.entitlements
                 properties:
                   com.apple.developer.networking.networkextension: [packet-tunnel-provider]
               dependencies:
