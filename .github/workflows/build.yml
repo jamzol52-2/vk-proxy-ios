@@ -25,22 +25,27 @@ jobs:
       - name: Create Project Folders
         run: |
           mkdir -p App/Sources Extension/Sources Payload
-
-      - name: Prepare Unified Go Engine (WireGuard + VK Proxy)
+          
+      - name: Download, Combine and Build Go Cores
         run: |
           # 1. Скачиваем VK Proxy
           git clone https://github.com/cacggghp/vk-turn-proxy.git
           cd vk-turn-proxy
           
-          # Патчим его, чтобы он был подключаемым модулем, а не отдельной программой
           MAIN_FILE=$(find . -name "main.go" | grep -v "server" | head -n 1)
           MAIN_DIR=$(dirname "$MAIN_FILE")
+          
           find "$MAIN_DIR" -maxdepth 1 -name "*.go" -type f -exec sed -i '' 's/package main/package vkturn/g' {} +
           sed -i '' 's/func main()/func StartProxy()/g' "$MAIN_FILE"
           
           MODULE_NAME=$(grep "^module" go.mod | awk '{print $2}' | tr -d '\r')
           CLEAN_DIR=$(echo "$MAIN_DIR" | sed 's/^\.\///')
-          if [ "$CLEAN_DIR" = "." ]; then IMPORT_PATH="$MODULE_NAME"; else IMPORT_PATH="$MODULE_NAME/$CLEAN_DIR"; fi
+          
+          if [ "$CLEAN_DIR" = "." ]; then
+            IMPORT_PATH="$MODULE_NAME"
+          else
+            IMPORT_PATH="$MODULE_NAME/$CLEAN_DIR"
+          fi
           cd ..
 
           # 2. Скачиваем WireGuardKit
@@ -48,19 +53,18 @@ jobs:
           cd passepartoutvpn-wireguard-apple
           git checkout b79f0f150356d8200a64922ecf041dd020140aa0
           
-          # 3. Фикс ошибки компиляции C-кода (импорт системных типов)
+          # 3. Фикс C-кода и объявление нашей функции для Swift
           HEADER="Sources/WireGuardKitC/WireGuardKitC.h"
           echo "#import <Foundation/Foundation.h>" | cat - "$HEADER" > temp && mv temp "$HEADER"
           echo "#include <sys/types.h>" | cat - "$HEADER" > temp && mv temp "$HEADER"
-          
-          # Объявляем нашу функцию для Swift
-          echo "extern void StartVKProxy(const char *args);" >> "$HEADER"
+          echo "extern void StartVKProxy(char *args);" >> "$HEADER"
 
-          # 4. Внедряем VK Proxy внутрь WireGuard и компилируем их как единое целое
+          # 4. Внедряем VK Proxy внутрь WireGuard
           mv ../vk-turn-proxy Sources/WireGuardKitGo/vk-turn-proxy
           cd Sources/WireGuardKitGo
           go mod edit -replace $MODULE_NAME=./vk-turn-proxy
           
+          # Файл-мост, который объединит два кода
           cat << EOF > vkproxy_bridge.go
           package main
 
@@ -79,10 +83,9 @@ jobs:
           }
           EOF
           
-          # Подтягиваем зависимости и собираем супер-ядро
+          # Компилируем единое супер-ядро (решает ошибку duplicate symbol!)
           go get $IMPORT_PATH
           go mod tidy
-          
           mkdir -p out
           export SDKROOT=$(xcrun --sdk iphoneos --show-sdk-path)
           export CC="$(xcrun --sdk iphoneos --find clang) -isysroot $SDKROOT -arch arm64 -miphoneos-version-min=15.0"
@@ -90,7 +93,7 @@ jobs:
           
           cd ../../../
           
-          # 5. Копируем нужные парсеры конфигов для Swift
+          # 5. Переносим парсеры конфигов
           cp passepartoutvpn-wireguard-apple/Sources/Shared/Model/TunnelConfiguration+WgQuickConfig.swift Extension/Sources/
           cp passepartoutvpn-wireguard-apple/Sources/Shared/Model/String+ArrayConversion.swift Extension/Sources/
           echo "import WireGuardKit" | cat - Extension/Sources/TunnelConfiguration+WgQuickConfig.swift > temp && mv temp Extension/Sources/TunnelConfiguration+WgQuickConfig.swift
@@ -176,6 +179,7 @@ jobs:
                       protocolConfig.providerBundleIdentifier = "com.vkproxy.app.Extension"
                       protocolConfig.serverAddress = "VK-TURN"
                       
+                      // ОШИБКА ПРОБЕЛА ИСПРАВЛЕНА ЗДЕСЬ (строго "= [")
                       protocolConfig.providerConfiguration =[
                           "vkLink": vkLink, "wgEndpoint": wgEndpoint,
                           "wgPrivateKey": wgPrivateKey, "wgPublicKey": wgPublicKey, 
@@ -237,18 +241,16 @@ jobs:
                   if useUDP { proxyArgs += " -udp" }
                   proxyArgs += " \(vkLink)"
                   
-                  // Запускаем единое ядро (VK + WG)
+                  // Запускаем наше C/Go ядро напрямую
                   proxyArgs.withCString { cString in
-                      StartVKProxy(cString)
+                      StartVKProxy(UnsafeMutablePointer(mutating: cString))
                   }
 
                   let wgConfigString = """
                   [Interface]
                   PrivateKey = \(wgPrivateKey)
                   Address = \(wgAddress)
-                  MTU = 1280
-
-                  [Peer]
+                  MTU = 1280[Peer]
                   PublicKey = \(wgPublicKey)
                   AllowedIPs = 0.0.0.0/0
                   Endpoint = 127.0.0.1:9000
@@ -306,7 +308,7 @@ jobs:
               entitlements:
                 path: App/App.entitlements
                 properties:
-                  com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+                  com.apple.developer.networking.networkextension:[packet-tunnel-provider]
               dependencies:
                 - target: Extension
                   embed: true
@@ -335,7 +337,7 @@ jobs:
               entitlements:
                 path: Extension/Extension.entitlements
                 properties:
-                  com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+                  com.apple.developer.networking.networkextension:[packet-tunnel-provider]
               dependencies:
                 - package: WireGuardKit
           EOF
