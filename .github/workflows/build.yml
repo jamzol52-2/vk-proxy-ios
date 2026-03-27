@@ -46,8 +46,8 @@ jobs:
           MODULE_NAME=$(grep "^module" go.mod | awk '{print $2}' | tr -d '\r')
           CLEAN_DIR=$(echo "$MAIN_DIR" | sed 's/^\.\///')
           
-          # ОШИБКА БЫЛА ЗДЕСЬ (не хватало пробела после if)
-          if[ "$CLEAN_DIR" = "." ]; then
+          # ИСПРАВЛЕННЫЙ ПРОБЕЛ: теперь строго "if [" 
+          if [ "$CLEAN_DIR" = "." ]; then
             IMPORT_PATH="$MODULE_NAME"
           else
             IMPORT_PATH="$MODULE_NAME/$CLEAN_DIR"
@@ -167,7 +167,7 @@ jobs:
                           "wgPrivateKey": wgPrivateKey, "wgPublicKey": wgPublicKey, 
                           "wgAddress": wgAddress, "useUDP": useUDP ? "true" : "false",
                           "threads": threads
-                      ] as [String : Any]
+                      ] as[String : Any]
                       
                       manager.protocolConfiguration = protocolConfig
                       manager.isEnabled = true
@@ -228,8 +228,7 @@ jobs:
                   Ios_bridgeStartProxy(proxyArgs)
 
                   // Запускаем WireGuard на внутренний порт
-                  let wgConfigString = """
-                  [Interface]
+                  let wgConfigString = """[Interface]
                   PrivateKey = \(wgPrivateKey)
                   Address = \(wgAddress)
                   MTU = 1280
