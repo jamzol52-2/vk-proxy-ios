@@ -179,7 +179,6 @@ jobs:
                       protocolConfig.providerBundleIdentifier = "com.vkproxy.app.Extension"
                       protocolConfig.serverAddress = "VK-TURN"
                       
-                      // ИСПРАВЛЕНО: Добавлен пробел между знаком "=" и символом "["
                       protocolConfig.providerConfiguration =[
                           "vkLink": vkLink, "wgEndpoint": wgEndpoint,
                           "wgPrivateKey": wgPrivateKey, "wgPublicKey": wgPublicKey, 
@@ -246,7 +245,6 @@ jobs:
                       StartVKProxy(UnsafeMutablePointer(mutating: cString))
                   }
 
-                  // ИСПРАВЛЕНО: Добавлен перенос строки перед [Peer], чтобы WireGuard нормально прочитал конфигурацию.
                   let wgConfigString = """
                   [Interface]
                   PrivateKey = \(wgPrivateKey)
@@ -293,7 +291,8 @@ jobs:
               type: application
               platform: iOS
               deploymentTarget: "15.0"
-              sources:[App/Sources]
+              # ИСПРАВЛЕНО: добавлен пробел
+              sources: [App/Sources]
               settings:
                 CODE_SIGNING_ALLOWED: NO
                 PRODUCT_BUNDLE_IDENTIFIER: com.vkproxy.app
@@ -311,7 +310,7 @@ jobs:
               entitlements:
                 path: App/App.entitlements
                 properties:
-                  com.apple.developer.networking.networkextension:[packet-tunnel-provider]
+                  com.apple.developer.networking.networkextension: [packet-tunnel-provider]
               dependencies:
                 - target: Extension
                   embed: true
@@ -320,7 +319,7 @@ jobs:
               type: app-extension
               platform: iOS
               deploymentTarget: "15.0"
-              sources: [Extension/Sources]
+              sources:[Extension/Sources]
               settings:
                 CODE_SIGNING_ALLOWED: NO
                 PRODUCT_BUNDLE_IDENTIFIER: com.vkproxy.app.Extension
@@ -340,7 +339,7 @@ jobs:
               entitlements:
                 path: Extension/Extension.entitlements
                 properties:
-                  com.apple.developer.networking.networkextension:[packet-tunnel-provider]
+                  com.apple.developer.networking.networkextension: [packet-tunnel-provider]
               dependencies:
                 - package: WireGuardKit
           EOF
