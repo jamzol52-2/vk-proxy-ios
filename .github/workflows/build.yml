@@ -24,7 +24,7 @@ jobs:
 
       - name: Create Project Folders
         run: |
-          mkdir -p App/Sources Extension/Sources Payload
+          mkdir -p App/Sources Extension/Sources Shared/Sources Payload
           
       - name: Download, Combine and Build Go Cores
         run: |
@@ -111,6 +111,77 @@ jobs:
           }
           EOF
 
+      - name: Write SharedConfig.swift
+        run: |
+          cat << 'EOF' > Shared/Sources/SharedConfig.swift
+          import Foundation
+
+          enum SharedConfig {
+              static let appGroupSuite = "group.com.vkproxy.app"
+              static let vpnBundleIdentifier = "com.vkproxy.app.Extension"
+
+              enum Keys {
+                  static let vkLink = "vkLink"
+                  static let wgEndpoint = "wgEndpoint"
+                  static let wgPrivateKey = "wgPrivateKey"
+                  static let wgPublicKey = "wgPublicKey"
+                  static let wgAddress = "wgAddress"
+                  static let useUDP = "useUDP"
+                  static let threads = "threads"
+              }
+
+              static let defaults: [String: Any] = [
+                  Keys.vkLink: "https://vk.com/call/join/...",
+                  Keys.wgEndpoint: "1.2.3.4:56000",
+                  Keys.wgPrivateKey: "",
+                  Keys.wgPublicKey: "",
+                  Keys.wgAddress: "10.0.0.2/32",
+                  Keys.useUDP: true,
+                  Keys.threads: "4"
+              ]
+
+              static func sharedDefaults() -> UserDefaults {
+                  if let shared = UserDefaults(suiteName: appGroupSuite) {
+                      return shared
+                  }
+                  return .standard
+              }
+          }
+
+          struct VPNSettings {
+              var vkLink: String
+              var wgEndpoint: String
+              var wgPrivateKey: String
+              var wgPublicKey: String
+              var wgAddress: String
+              var useUDP: Bool
+              var threads: String
+
+              static func load(from defaults: UserDefaults = SharedConfig.sharedDefaults()) -> VPNSettings {
+                  defaults.register(defaults: SharedConfig.defaults)
+                  return VPNSettings(
+                      vkLink: defaults.string(forKey: SharedConfig.Keys.vkLink) ?? "",
+                      wgEndpoint: defaults.string(forKey: SharedConfig.Keys.wgEndpoint) ?? "",
+                      wgPrivateKey: defaults.string(forKey: SharedConfig.Keys.wgPrivateKey) ?? "",
+                      wgPublicKey: defaults.string(forKey: SharedConfig.Keys.wgPublicKey) ?? "",
+                      wgAddress: defaults.string(forKey: SharedConfig.Keys.wgAddress) ?? "",
+                      useUDP: defaults.object(forKey: SharedConfig.Keys.useUDP) as? Bool ?? true,
+                      threads: defaults.string(forKey: SharedConfig.Keys.threads) ?? "4"
+                  )
+              }
+
+              func save(to defaults: UserDefaults = SharedConfig.sharedDefaults()) {
+                  defaults.set(vkLink, forKey: SharedConfig.Keys.vkLink)
+                  defaults.set(wgEndpoint, forKey: SharedConfig.Keys.wgEndpoint)
+                  defaults.set(wgPrivateKey, forKey: SharedConfig.Keys.wgPrivateKey)
+                  defaults.set(wgPublicKey, forKey: SharedConfig.Keys.wgPublicKey)
+                  defaults.set(wgAddress, forKey: SharedConfig.Keys.wgAddress)
+                  defaults.set(useUDP, forKey: SharedConfig.Keys.useUDP)
+                  defaults.set(threads, forKey: SharedConfig.Keys.threads)
+              }
+          }
+          EOF
+
       - name: Write ContentView.swift
         run: |
           cat << 'EOF' > App/Sources/ContentView.swift
@@ -119,13 +190,27 @@ jobs:
 
           struct ContentView: View {
               @State private var vpnStatus: String = "Отключено"
-              @AppStorage("vkLink") private var vkLink: String = "https://vk.com/call/join/..."
-              @AppStorage("wgEndpoint") private var wgEndpoint: String = "1.2.3.4:56000"
-              @AppStorage("wgPrivateKey") private var wgPrivateKey: String = "ТВОЙ_ПРИВАТНЫЙ_КЛЮЧ"
-              @AppStorage("wgPublicKey") private var wgPublicKey: String = "ПУБЛИЧНЫЙ_КЛЮЧ_СЕРВЕРА"
-              @AppStorage("wgAddress") private var wgAddress: String = "10.0.0.2/32"
-              @AppStorage("useUDP") private var useUDP: Bool = true
-              @AppStorage("threads") private var threads: String = "4"
+            @State private var statusMessage: String = ""
+            @State private var vkLink: String = ""
+            @State private var wgEndpoint: String = ""
+            @State private var wgPrivateKey: String = ""
+            @State private var wgPublicKey: String = ""
+            @State private var wgAddress: String = ""
+            @State private var useUDP: Bool = true
+            @State private var threads: String = "4"
+
+            private let sharedDefaults = SharedConfig.sharedDefaults()
+
+            init() {
+              let settings = VPNSettings.load()
+              _vkLink = State(initialValue: settings.vkLink)
+              _wgEndpoint = State(initialValue: settings.wgEndpoint)
+              _wgPrivateKey = State(initialValue: settings.wgPrivateKey)
+              _wgPublicKey = State(initialValue: settings.wgPublicKey)
+              _wgAddress = State(initialValue: settings.wgAddress)
+              _useUDP = State(initialValue: settings.useUDP)
+              _threads = State(initialValue: settings.threads)
+            }
 
               var body: some View {
                   ScrollView {
@@ -136,6 +221,13 @@ jobs:
                           
                           Text("VK Turn Proxy").font(.title).bold()
                           Text("Статус: \(vpnStatus)").foregroundColor(.secondary)
+                            if !statusMessage.isEmpty {
+                              Text(statusMessage)
+                                .font(.footnote)
+                                .foregroundColor(.orange)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal)
+                            }
                           
                           VStack(alignment: .leading, spacing: 10) {
                               Text("Ссылка на звонок ВК:")
@@ -169,44 +261,116 @@ jobs:
                                   .foregroundColor(.white).cornerRadius(10)
                           }.padding(.horizontal)
                       }
-                  }.onAppear(perform: updateStatus)
+                            }
+                            .onAppear {
+                              reloadSettingsFromSharedDefaults()
+                              updateStatus()
+                            }
               }
+
+                          private func reloadSettingsFromSharedDefaults() {
+                            let settings = VPNSettings.load(from: sharedDefaults)
+                            vkLink = settings.vkLink
+                            wgEndpoint = settings.wgEndpoint
+                            wgPrivateKey = settings.wgPrivateKey
+                            wgPublicKey = settings.wgPublicKey
+                            wgAddress = settings.wgAddress
+                            useUDP = settings.useUDP
+                            threads = settings.threads
+                          }
+
+                          private func persistSettings() {
+                            let sanitizedThreads = max(Int(threads) ?? 4, 1)
+                            threads = String(sanitizedThreads)
+
+                            let settings = VPNSettings(
+                              vkLink: vkLink.trimmingCharacters(in: .whitespacesAndNewlines),
+                              wgEndpoint: wgEndpoint.trimmingCharacters(in: .whitespacesAndNewlines),
+                              wgPrivateKey: wgPrivateKey.trimmingCharacters(in: .whitespacesAndNewlines),
+                              wgPublicKey: wgPublicKey.trimmingCharacters(in: .whitespacesAndNewlines),
+                              wgAddress: wgAddress.trimmingCharacters(in: .whitespacesAndNewlines),
+                              useUDP: useUDP,
+                              threads: threads
+                            )
+                            settings.save(to: sharedDefaults)
+                          }
               
               func saveAndStartVPN() {
+                            persistSettings()
+                            statusMessage = ""
+
                   NETunnelProviderManager.loadAllFromPreferences { managers, _ in
                       let manager = managers?.first ?? NETunnelProviderManager()
                       let protocolConfig = NETunnelProviderProtocol()
-                      protocolConfig.providerBundleIdentifier = "com.vkproxy.app.Extension"
+                              protocolConfig.providerBundleIdentifier = SharedConfig.vpnBundleIdentifier
                       protocolConfig.serverAddress = "VK-TURN"
                       
+                              // Keep providerConfiguration for backward compatibility,
+                              // while extension primarily reads from App Group shared defaults.
                       protocolConfig.providerConfiguration = [
-                          "vkLink": vkLink, "wgEndpoint": wgEndpoint,
-                          "wgPrivateKey": wgPrivateKey, "wgPublicKey": wgPublicKey, 
-                          "wgAddress": wgAddress, "useUDP": useUDP ? "true" : "false",
-                          "threads": threads
+                                SharedConfig.Keys.vkLink: vkLink,
+                                SharedConfig.Keys.wgEndpoint: wgEndpoint,
+                                SharedConfig.Keys.wgPrivateKey: wgPrivateKey,
+                                SharedConfig.Keys.wgPublicKey: wgPublicKey,
+                                SharedConfig.Keys.wgAddress: wgAddress,
+                                SharedConfig.Keys.useUDP: useUDP,
+                                SharedConfig.Keys.threads: threads
                       ] as [String : Any]
                       
                       manager.protocolConfiguration = protocolConfig
                       manager.isEnabled = true
                       manager.localizedDescription = "VK Turn Proxy"
                       
-                      manager.saveToPreferences { _ in
-                          try? manager.connection.startVPNTunnel()
-                          updateStatus()
+                              manager.saveToPreferences { saveError in
+                                if let saveError {
+                                  DispatchQueue.main.async {
+                                    statusMessage = "Не удалось сохранить VPN-профиль: \(saveError.localizedDescription). Проверьте Signing, App Groups и entitlement Network Extension (требуется платный Apple Developer аккаунт)."
+                                  }
+                                  return
+                                }
+
+                                manager.loadFromPreferences { loadError in
+                                  if let loadError {
+                                    DispatchQueue.main.async {
+                                      statusMessage = "Профиль сохранен, но не удалось перечитать настройки: \(loadError.localizedDescription)"
+                                    }
+                                    return
+                                  }
+
+                                  do {
+                                    try manager.connection.startVPNTunnel()
+                                    DispatchQueue.main.async {
+                                      updateStatus()
+                                    }
+                                  } catch {
+                                    DispatchQueue.main.async {
+                                      statusMessage = "Не удалось запустить VPN: \(error.localizedDescription)"
+                                      updateStatus()
+                                    }
+                                  }
+                                }
                       }
                   }
               }
+
               func stopVPN() {
                   NETunnelProviderManager.loadAllFromPreferences { managers, _ in
                       managers?.first?.connection.stopVPNTunnel()
-                      updateStatus()
+                              DispatchQueue.main.async {
+                                updateStatus()
+                              }
                   }
               }
+
               func updateStatus() {
                   NETunnelProviderManager.loadAllFromPreferences { managers, _ in
-                      if let m = managers?.first, m.connection.status != .disconnected {
-                          vpnStatus = "Подключено"
-                      } else { vpnStatus = "Отключено" }
+                              DispatchQueue.main.async {
+                                if let m = managers?.first, m.connection.status != .disconnected {
+                                  vpnStatus = "Подключено"
+                                } else {
+                                  vpnStatus = "Отключено"
+                                }
+                              }
                   }
               }
           }
@@ -223,22 +387,40 @@ jobs:
               private var adapter: WireGuardAdapter?
 
               override func startTunnel(options: [String : NSObject]?, completionHandler: @escaping (Error?) -> Void) {
-                  guard let config = (protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration else {
-                      completionHandler(NSError(domain: "VKProxy", code: 1, userInfo: nil))
-                      return
-                  }
+              let sharedDefaults = SharedConfig.sharedDefaults()
+              var settings = VPNSettings.load(from: sharedDefaults)
+
+              // Fallback to providerConfiguration for compatibility with older profiles.
+              if let config = (protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration {
+                if let value = config[SharedConfig.Keys.vkLink] as? String, !value.isEmpty { settings.vkLink = value }
+                if let value = config[SharedConfig.Keys.wgEndpoint] as? String, !value.isEmpty { settings.wgEndpoint = value }
+                if let value = config[SharedConfig.Keys.wgPrivateKey] as? String, !value.isEmpty { settings.wgPrivateKey = value }
+                if let value = config[SharedConfig.Keys.wgPublicKey] as? String, !value.isEmpty { settings.wgPublicKey = value }
+                if let value = config[SharedConfig.Keys.wgAddress] as? String, !value.isEmpty { settings.wgAddress = value }
+                if let value = config[SharedConfig.Keys.useUDP] as? Bool { settings.useUDP = value }
+                if let value = config[SharedConfig.Keys.useUDP] as? String { settings.useUDP = (value as NSString).boolValue }
+                if let value = config[SharedConfig.Keys.threads] as? String, !value.isEmpty { settings.threads = value }
+              }
+
+              guard !settings.wgPrivateKey.isEmpty,
+                !settings.wgPublicKey.isEmpty,
+                !settings.wgAddress.isEmpty,
+                !settings.vkLink.isEmpty else {
+                completionHandler(NSError(
+                  domain: "VKProxy",
+                  code: 1001,
+                  userInfo: [NSLocalizedDescriptionKey: "Отсутствуют обязательные параметры VPN в App Group storage"]
+                ))
+                return
+              }
+
+              settings.save(to: sharedDefaults)
+
+              let threadCount = max(Int(settings.threads) ?? 4, 1)
                   
-                  let vkLink = config["vkLink"] as? String ?? ""
-                  let wgEndpoint = config["wgEndpoint"] as? String ?? "1.2.3.4:56000"
-                  let wgPrivateKey = config["wgPrivateKey"] as? String ?? ""
-                  let wgPublicKey = config["wgPublicKey"] as? String ?? ""
-                  let wgAddress = config["wgAddress"] as? String ?? ""
-                  let useUDP = (config["useUDP"] as? String) == "true"
-                  let threads = config["threads"] as? String ?? "4"
-                  
-                  var proxyArgs = "-local 127.0.0.1:9000 -remote \(wgEndpoint) -n \(threads)"
-                  if useUDP { proxyArgs += " -udp" }
-                  proxyArgs += " \(vkLink)"
+              var proxyArgs = "-local 127.0.0.1:9000 -remote \(settings.wgEndpoint) -n \(threadCount)"
+              if settings.useUDP { proxyArgs += " -udp" }
+              proxyArgs += " \(settings.vkLink)"
                   
                   // Запускаем наше C/Go ядро напрямую
                   proxyArgs.withCString { cString in
@@ -247,12 +429,12 @@ jobs:
 
                   let wgConfigString = """
                   [Interface]
-                  PrivateKey = \(wgPrivateKey)
-                  Address = \(wgAddress)
+              PrivateKey = \(settings.wgPrivateKey)
+              Address = \(settings.wgAddress)
                   MTU = 1280
 
                   [Peer]
-                  PublicKey = \(wgPublicKey)
+              PublicKey = \(settings.wgPublicKey)
                   AllowedIPs = 0.0.0.0/0
                   Endpoint = 127.0.0.1:9000
                   PersistentKeepalive = 25
@@ -291,7 +473,9 @@ jobs:
               type: application
               platform: iOS
               deploymentTarget: "15.0"
-              sources: [App/Sources]
+              sources:
+                - App/Sources
+                - Shared/Sources
               settings:
                 CODE_SIGNING_ALLOWED: NO
                 PRODUCT_BUNDLE_IDENTIFIER: com.vkproxy.app
@@ -309,7 +493,9 @@ jobs:
               entitlements:
                 path: App/App.entitlements
                 properties:
-                  com.apple.developer.networking.networkextension:[packet-tunnel-provider]
+                  com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+                  com.apple.security.application-groups:
+                    - group.com.vkproxy.app
               dependencies:
                 - target: Extension
                   embed: true
@@ -318,7 +504,9 @@ jobs:
               type: app-extension
               platform: iOS
               deploymentTarget: "15.0"
-              sources: [Extension/Sources]
+              sources:
+                - Extension/Sources
+                - Shared/Sources
               settings:
                 CODE_SIGNING_ALLOWED: NO
                 PRODUCT_BUNDLE_IDENTIFIER: com.vkproxy.app.Extension
@@ -338,9 +526,45 @@ jobs:
               entitlements:
                 path: Extension/Extension.entitlements
                 properties:
-                  com.apple.developer.networking.networkextension:[packet-tunnel-provider]
+                  com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+                  com.apple.security.application-groups:
+                    - group.com.vkproxy.app
               dependencies:
                 - package: WireGuardKit
+          EOF
+
+      - name: Write README.md
+        run: |
+          cat << 'EOF' > README.md
+          # VKProxy iOS Build Pipeline
+
+          This repository contains a CI pipeline that generates and builds an iOS app with a Packet Tunnel VPN extension based on WireGuardKit and vk-turn-proxy.
+
+          ## Runtime Architecture
+
+          - App target and extension target share VPN settings via App Group storage.
+          - Shared settings model is implemented in `Shared/Sources/SharedConfig.swift`.
+          - Main app writes settings to `UserDefaults(suiteName: "group.com.vkproxy.app")`.
+          - Extension reads the same storage in `PacketTunnelProvider`.
+
+          ## Xcode Manual Setup (Required)
+
+          After generating `VKProxy.xcodeproj`, open it in Xcode and verify capabilities for both targets (`VKProxyApp` and `Extension`):
+
+          1. Signing & Capabilities -> add **App Groups**.
+          2. Ensure `group.com.vkproxy.app` is present and selected for both targets.
+          3. Ensure **Network Extensions** capability is present.
+
+          ## Important Apple Requirement
+
+          Packet Tunnel VPN requires Apple Network Extension entitlement approval.
+
+          - Without proper entitlement, `NETunnelProviderManager.saveToPreferences` can fail with permission errors.
+          - A paid Apple Developer account is required for real-device deployment.
+
+          ## CI Note
+
+          Current workflow builds unsigned artifacts (`CODE_SIGNING_ALLOWED=NO`) for reproducible CI output. For installable builds, configure signing and provisioning profiles in your own environment.
           EOF
 
       - name: Generate Xcode Project
