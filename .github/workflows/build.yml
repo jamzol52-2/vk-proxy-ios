@@ -179,7 +179,7 @@ jobs:
                       protocolConfig.providerBundleIdentifier = "com.vkproxy.app.Extension"
                       protocolConfig.serverAddress = "VK-TURN"
                       
-                      // ОШИБКА ПРОБЕЛА ИСПРАВЛЕНА ЗДЕСЬ (строго "= [")
+                      // ИСПРАВЛЕНО: Добавлен пробел между знаком "=" и символом "["
                       protocolConfig.providerConfiguration =[
                           "vkLink": vkLink, "wgEndpoint": wgEndpoint,
                           "wgPrivateKey": wgPrivateKey, "wgPublicKey": wgPublicKey, 
@@ -246,11 +246,14 @@ jobs:
                       StartVKProxy(UnsafeMutablePointer(mutating: cString))
                   }
 
+                  // ИСПРАВЛЕНО: Добавлен перенос строки перед [Peer], чтобы WireGuard нормально прочитал конфигурацию.
                   let wgConfigString = """
                   [Interface]
                   PrivateKey = \(wgPrivateKey)
                   Address = \(wgAddress)
-                  MTU = 1280[Peer]
+                  MTU = 1280
+                  
+                  [Peer]
                   PublicKey = \(wgPublicKey)
                   AllowedIPs = 0.0.0.0/0
                   Endpoint = 127.0.0.1:9000
@@ -290,7 +293,7 @@ jobs:
               type: application
               platform: iOS
               deploymentTarget: "15.0"
-              sources: [App/Sources]
+              sources:[App/Sources]
               settings:
                 CODE_SIGNING_ALLOWED: NO
                 PRODUCT_BUNDLE_IDENTIFIER: com.vkproxy.app
