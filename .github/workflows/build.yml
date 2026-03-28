@@ -427,18 +427,18 @@ jobs:
                       StartVKProxy(UnsafeMutablePointer(mutating: cString))
                   }
 
-                  let wgConfigString = """
-                  [Interface]
+              let wgConfigString = """
+              [Interface]
               PrivateKey = \(settings.wgPrivateKey)
               Address = \(settings.wgAddress)
-                  MTU = 1280
+              MTU = 1280
 
-                  [Peer]
+              [Peer]
               PublicKey = \(settings.wgPublicKey)
-                  AllowedIPs = 0.0.0.0/0
-                  Endpoint = 127.0.0.1:9000
-                  PersistentKeepalive = 25
-                  """
+              AllowedIPs = 0.0.0.0/0
+              Endpoint = 127.0.0.1:9000
+              PersistentKeepalive = 25
+              """
                   
                   do {
                       let tunnelConfig = try TunnelConfiguration(fromWgQuickConfig: wgConfigString, called: "VKProxy")
