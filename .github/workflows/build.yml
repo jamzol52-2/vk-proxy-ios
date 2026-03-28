@@ -179,8 +179,7 @@ jobs:
                       protocolConfig.providerBundleIdentifier = "com.vkproxy.app.Extension"
                       protocolConfig.serverAddress = "VK-TURN"
                       
-                      // ОШИБКА ПРОБЕЛА ИСПРАВЛЕНА ЗДЕСЬ (строго "= [")
-                      protocolConfig.providerConfiguration =[
+                      protocolConfig.providerConfiguration = [
                           "vkLink": vkLink, "wgEndpoint": wgEndpoint,
                           "wgPrivateKey": wgPrivateKey, "wgPublicKey": wgPublicKey, 
                           "wgAddress": wgAddress, "useUDP": useUDP ? "true" : "false",
@@ -250,7 +249,9 @@ jobs:
                   [Interface]
                   PrivateKey = \(wgPrivateKey)
                   Address = \(wgAddress)
-                  MTU = 1280[Peer]
+                  MTU = 1280
+
+                  [Peer]
                   PublicKey = \(wgPublicKey)
                   AllowedIPs = 0.0.0.0/0
                   Endpoint = 127.0.0.1:9000
